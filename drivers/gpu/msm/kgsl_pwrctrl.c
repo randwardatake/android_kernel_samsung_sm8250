@@ -259,12 +259,16 @@ int kgsl_clk_set_rate(struct kgsl_device *device,
 	int ret = 0;
 
 	/* GMU scales GPU freq */
-	if (gmu_core_gpmu_isenabled(device))
+	if (gmu_core_gpmu_isenabled(device)) {
 		ret = gmu_core_dcvs_set(device, pwrlevel, INVALID_DCVS_IDX);
-	else
+		/* Direct 800 MHz PLL clock override for Turbo mode */
+		if (pwrlevel == 0 && !ret)
+			kgsl_pwrctrl_clk_set_rate(pwr->grp_clks[0], pl->gpu_freq, clocks[0]);
+	} else {
 		/* Linux clock driver scales GPU freq */
 		ret = kgsl_pwrctrl_clk_set_rate(pwr->grp_clks[0],
 			pl->gpu_freq, clocks[0]);
+	}
 
 	if (ret)
 		dev_err(device->dev, "GPU clk freq set failure: %d\n",

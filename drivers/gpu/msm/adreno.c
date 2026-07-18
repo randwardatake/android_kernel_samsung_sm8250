@@ -13,6 +13,7 @@
 #include <linux/msm_kgsl.h>
 #include <linux/msm-bus.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pm_opp.h>
 #include <linux/nvmem-consumer.h>
 #include <soc/qcom/scm.h>
 
@@ -1047,6 +1048,17 @@ static int adreno_of_parse_pwrlevels(struct adreno_device *adreno_dev,
 		level->bus_max = level->bus_freq;
 		kgsl_of_property_read_ddrtype(child,
 			"qcom,bus-max", &level->bus_max);
+	}
+
+		/* Dynamic Runtime GPU Overclock Injection (940.8 MHz - 7-Level GMU Compatible) */
+	if (pwr->num_pwrlevels > 0) {
+		/* Add 940.8 MHz to the Linux Operating Performance Point (OPP) table */
+		dev_pm_opp_add(&device->pdev->dev, 940800000, 416); /* 416 = RPMH_REGULATOR_LEVEL_TURBO_L1 */
+
+		/* Override index 0 (normally 587 MHz) to 940.8 MHz while keeping exact 7-level GMU count */
+		pwr->pwrlevels[0].gpu_freq = 940800000;
+
+		dev_info(device->dev, "Antigravity Runtime OC: Successfully overrode pwrlevels[0] to 940.8 MHz (7-level GMU compatible)\n");
 	}
 
 	return 0;

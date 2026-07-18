@@ -19,6 +19,23 @@
 #include "kgsl_device.h"
 #include "kgsl_gmu.h"
 
+/*
+ * Antigravity OC: RPMh voltage level assigned to the 940.8 MHz overclock
+ * pwrlevel. Predefined TURBO level (NOT computed from MHz). 416 = TURBO_L1
+ * (stock Adreno 650 max). Raise for more sustained-load headroom.
+ */
+#ifndef OC_VLVL
+#define OC_VLVL 450
+#endif
+
+/*
+ * Antigravity OC: target GPU frequency (Hz). Must match adreno.c OC_FREQ.
+ * 800000000 = safe, 870000000 = mid, 940800000 = max tested.
+ */
+#ifndef OC_FREQ
+#define OC_FREQ 940800000
+#endif
+
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "kgsl."
 
@@ -742,13 +759,26 @@ static int rpmh_arc_votes_init(struct kgsl_device *device,
 			continue;
 		}
 
+		/*
+		 * Antigravity OC: frequencies >= 940.8 MHz are not present in the
+		 * stock OPP table, so dev_pm_opp_find_freq_exact() would fail and
+		 * kill the GMU probe. Skip the OPP lookup for the OC level and
+		 * assign a predefined TURBO voltage level directly.
+		 * OC_VLVL is tunable: 416=TURBO_L1 (stock max), higher = more
+		 * headroom for sustained 940.8 MHz under load.
+		 */
+		if (freq_tbl[i] >= OC_FREQ) {
+			vlvl_tbl[i] = OC_VLVL;
+			continue;
+		}
+
 		opp = dev_pm_opp_find_freq_exact(&device->pdev->dev,
-			freq_tbl[i], true);
+				freq_tbl[i], true);
 
 		if (IS_ERR(opp)) {
 			dev_err(&gmu->pdev->dev,
-				"Failed to find opp freq %d for GPU\n",
-				freq_tbl[i]);
+					"Failed to find opp freq %d for GPU\n",
+					freq_tbl[i]);
 			return PTR_ERR(opp);
 		}
 

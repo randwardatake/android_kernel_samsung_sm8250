@@ -27,6 +27,14 @@
 #include "adreno_trace.h"
 #include "kgsl_trace.h"
 
+/*
+ * Antigravity OC: target GPU frequency (Hz). Build-time tunable via -DOC_FREQ=
+ * in KCPPFLAGS. 800000000 = safe, 870000000 = mid, 940800000 = max tested.
+ */
+#ifndef OC_FREQ
+#define OC_FREQ 940800000
+#endif
+
 /* Include the master list of GPU cores that are supported */
 #include "adreno-gpulist.h"
 
@@ -1047,18 +1055,7 @@ static int adreno_of_parse_pwrlevels(struct adreno_device *adreno_dev,
 
 		level->bus_max = level->bus_freq;
 		kgsl_of_property_read_ddrtype(child,
-			"qcom,bus-max", &level->bus_max);
-	}
-
-		/* Dynamic Runtime GPU Overclock Injection (940.8 MHz - 7-Level GMU Compatible) */
-	if (pwr->num_pwrlevels > 0) {
-		/* Add 940.8 MHz to the Linux Operating Performance Point (OPP) table */
-		dev_pm_opp_add(&device->pdev->dev, 940800000, 416); /* 416 = RPMH_REGULATOR_LEVEL_TURBO_L1 */
-
-		/* Override index 0 (normally 587 MHz) to 940.8 MHz while keeping exact 7-level GMU count */
-		pwr->pwrlevels[0].gpu_freq = 940800000;
-
-		dev_info(device->dev, "Antigravity Runtime OC: Successfully overrode pwrlevels[0] to 940.8 MHz (7-level GMU compatible)\n");
+				"qcom,bus-max", &level->bus_max);
 	}
 
 	return 0;
@@ -1124,6 +1121,8 @@ static int adreno_of_get_legacy_pwrlevels(struct adreno_device *adreno_dev,
 {
 	struct device_node *node;
 	int ret;
+	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
+	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 
 	node = of_find_node_by_name(parent, "qcom,gpu-pwrlevels");
 
@@ -1142,6 +1141,32 @@ static int adreno_of_get_legacy_pwrlevels(struct adreno_device *adreno_dev,
 	adreno_of_get_limits(adreno_dev, parent);
 
 	adreno_of_get_bimc_iface_clk(adreno_dev, parent);
+
+	/*
+	 * Antigravity Runtime OC + Thermal Lock Bypass (940.8 MHz, 7-Level GMU Compatible)
+	 *
+	 * This runs AFTER all sub-parsers (including adreno_of_get_limits, which
+	 * sets ADRENO_LM_CTRL), so the bits we clear here stick for the whole boot.
+	 *
+	 * 1) Override pwrlevel[0] (normally 587/670 MHz) to 940.8 MHz while keeping
+	 *    the exact 7-level GMU DCVS count intact (GMU ROM rejects <7 or >7 levels).
+	 * 2) Inject 940.8 MHz into the Linux OPP table at TURBO_L1 voltage.
+	 * 3) Permanently clear ADRENO_THROTTLING_CTRL and ADRENO_LM_CTRL. These ship
+	 *    enabled by default (adreno.c pwrctrl_flag init + adreno_of_get_limits) and
+	 *    clamp the DCVS to the lowest pwrlevel (305 MHz) even under load, defeating
+	 *    the overclock. With active cooling this is safe and lets the GPU hold 940.8.
+	 */
+	if (pwr->num_pwrlevels > 0) {
+		pwr->pwrlevels[0].gpu_freq = OC_FREQ;
+
+		dev_pm_opp_add(&device->pdev->dev, OC_FREQ, 416); /* 416 = RPMH_REGULATOR_LEVEL_TURBO_L1 */
+
+		clear_bit(ADRENO_THROTTLING_CTRL, &adreno_dev->pwrctrl_flag);
+		clear_bit(ADRENO_LM_CTRL, &adreno_dev->pwrctrl_flag);
+
+		dev_info(device->dev,
+			"Antigravity Runtime OC: pwrlevels[0]=940.8 MHz, throttle/lm lock bypassed (7-level GMU compatible)\n");
+	}
 
 	return 0;
 }
